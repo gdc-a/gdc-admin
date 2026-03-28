@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Appointments</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #f7f9fb;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 40px auto;
+            background: #fff;
+            border-radius: 18px;
+            box-shadow: 0 6px 32px rgba(0,0,0,0.10);
+            padding: 36px 32px 40px 32px;
+        }
+        h1 {
+            text-align: center;
+            color: #1a2233;
+            margin-bottom: 36px;
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 18px;
+            margin-bottom: 28px;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .controls label {
+            font-weight: 500;
+            color: #374151;
+            margin-right: 6px;
+        }
+        .controls input, .controls select {
+            padding: 10px 14px;
+            border: 1.5px solid #b6c2d1;
+            border-radius: 8px;
+            font-size: 1.08rem;
+            background: #f8fafc;
+            transition: border 0.2s;
+        }
+        .controls input:focus, .controls select:focus {
+            border: 1.5px solid #38bdf8;
+            outline: none;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            background: #fff;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+        th, td {
+            border: 1px solid #e5e7eb;
+            padding: 12px 16px;
+            text-align: left;
+            font-size: 1.04rem;
+        }
+        th {
+            background: #e0e7ef;
+            color: #1e293b;
+            font-weight: 700;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+        tr:nth-child(even) td {
+            background: #f6faff;
+        }
+        tr:hover td {
+            background: #dbeafe;
+            transition: background 0.2s;
+        }
+        #noResults {
+            text-align: center;
+            color: #888;
+            font-size: 1.1rem;
+            padding: 24px 0;
+        }
+        @media (max-width: 900px) {
+            .container { padding: 8px; }
+            th, td { padding: 8px 6px; font-size: 0.98rem; }
+            h1 { font-size: 2rem; }
+        }
+        @media (max-width: 700px) {
+            .container { padding: 2px; }
+            table, thead, tbody, th, td, tr { display: block; }
+            th, td { padding: 8px; }
+            th { position: static; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>All Appointments</h1>
+        <div class="controls">
+            <div>
+                <label for="filterDate">Show: </label>
+                <select id="filterDate">
+                    <option value="all">All</option>
+                    <option value="today">Today</option>
+                    <option value="tomorrow">Tomorrow</option>
+                </select>
+            </div>
+            <div style="flex:1; text-align:right;">
+                <input type="text" id="searchInput" placeholder="🔍 Search name or email..." style="min-width:220px; max-width:350px; width:60%;">
+            </div>
+        </div>
+        <div style="overflow-x:auto;">
+            <table id="appointmentsTable">
+                <thead>
+                    <tr id="tableHeader"></tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+            <div id="noResults" style="display:none;">No appointments found.</div>
+        </div>
+    </div>
+    <script>
+        // Published CSV URL from Google Sheets
+        const sheetCSVUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQwOw7FiuOpdV7w17VzAJuK6QSUPDpHlKOmmzH3kCSGobLvadKIAfUZJXPZFuxcrYc70qalat6Cy4Cn/pub?gid=494683881&single=true&output=csv';
+
+        let allRows = [];
+        let header = [];
+
+        function parseCSV(csv) {
+            // Handle quoted fields and commas
+            const lines = csv.split(/\r?\n/).filter(line => line.trim() !== '');
+            return lines.map(line => {
+                const result = [];
+                let inQuotes = false, value = '';
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    if (char === '"') {
+                        inQuotes = !inQuotes;
+                    } else if (char === ',' && !inQuotes) {
+                        result.push(value);
+                        value = '';
+                    } else {
+                        value += char;
+                    }
+                }
+                result.push(value);
+                return result;
+            });
+        }
+
+        function formatDateString(str) {
+            // Try to parse date in DD/MM/YYYY or YYYY-MM-DD or MM/DD/YYYY
+            if (!str) return null;
+            let d = null;
+            if (/\d{2}\/\d{2}\/\d{4}/.test(str)) {
+                // DD/MM/YYYY
+                const [day, month, year] = str.split('/');
+                d = new Date(`${year}-${month}-${day}`);
+            } else if (/\d{4}-\d{2}-\d{2}/.test(str)) {
+                d = new Date(str);
+            } else if (/\d{2}\/\d{2}\/\d{2}/.test(str)) {
+                // MM/DD/YY
+                const [month, day, year] = str.split('/');
+                d = new Date(`20${year}-${month}-${day}`);
+            }
+            return d && !isNaN(d) ? d : null;
+        }
+
+        function renderTable(rows) {
+            const headerRow = document.getElementById('tableHeader');
+            headerRow.innerHTML = '';
+            header.forEach(col => {
+                const th = document.createElement('th');
+                th.textContent = col;
+                headerRow.appendChild(th);
+            });
+            const tableBody = document.getElementById('tableBody');
+            tableBody.innerHTML = '';
+            let count = 0;
+            rows.forEach(row => {
+                if(row.length === header.length) {
+                    const tr = document.createElement('tr');
+                    row.forEach(cell => {
+                        const td = document.createElement('td');
+                        td.textContent = cell;
+                        tr.appendChild(td);
+                    });
+                    tableBody.appendChild(tr);
+                    count++;
+                }
+            });
+            // Show/hide no results message
+            document.getElementById('noResults').style.display = count === 0 ? '' : 'none';
+        }
+
+        function filterAndSearch() {
+            const filter = document.getElementById('filterDate').value;
+            const search = document.getElementById('searchInput').value.trim().toLowerCase();
+            let dateColIdx = -1;
+            let nameColIdx = -1;
+            let emailColIdx = -1;
+            header.forEach((col, idx) => {
+                if (col.toLowerCase().includes('date') && dateColIdx === -1) dateColIdx = idx;
+                if (col.toLowerCase().includes('name') && nameColIdx === -1) nameColIdx = idx;
+                if (col.toLowerCase().includes('email') && emailColIdx === -1) emailColIdx = idx;
+            });
+            const today = new Date();
+            today.setHours(0,0,0,0);
+            const tomorrow = new Date(today);
+            tomorrow.setDate(today.getDate() + 1);
+            let filtered = allRows.filter(row => {
+                let match = true;
+                // Date filter
+                if (filter !== 'all' && dateColIdx !== -1) {
+                    const d = formatDateString(row[dateColIdx]);
+                    if (!d) return false;
+                    d.setHours(0,0,0,0);
+                    if (filter === 'today' && d.getTime() !== today.getTime()) match = false;
+                    if (filter === 'tomorrow' && d.getTime() !== tomorrow.getTime()) match = false;
+                }
+                // Search filter
+                if (search && (nameColIdx !== -1 || emailColIdx !== -1)) {
+                    const name = nameColIdx !== -1 ? row[nameColIdx].toLowerCase() : '';
+                    const email = emailColIdx !== -1 ? row[emailColIdx].toLowerCase() : '';
+                    if (!name.includes(search) && !email.includes(search)) match = false;
+                }
+                return match;
+            });
+            renderTable(filtered);
+        }
+
+        fetch(sheetCSVUrl)
+            .then(response => response.text())
+            .then(csv => {
+                const rows = parseCSV(csv);
+                header = rows[0];
+                allRows = rows.slice(1);
+                renderTable(allRows);
+            })
+            .catch(error => {
+                document.getElementById('appointmentsTable').outerHTML = '<p style="color:red">Failed to load data.</p>';
+            });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('filterDate').addEventListener('change', filterAndSearch);
+            document.getElementById('searchInput').addEventListener('input', filterAndSearch);
+            // Enter key triggers search
+            document.getElementById('searchInput').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') filterAndSearch();
+            });
+        });
+    </script>
+</body>
+</html>
