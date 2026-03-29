@@ -119,14 +119,6 @@
     <div class="container">
         <h1>All Appointments</h1>
         <div class="controls">
-            <div>
-                <label for="filterDate">Show: </label>
-                <select id="filterDate">
-                    <option value="all">All</option>
-                    <option value="today">Today</option>
-                    <option value="tomorrow">Tomorrow</option>
-                </select>
-            </div>
             <div style="flex:1; text-align:right; min-width:180px;">
                 <input type="text" id="searchInput" placeholder="🔍 Search name or email..." style="min-width:180px; max-width:350px; width:100%; box-sizing:border-box;">
             </div>
@@ -191,9 +183,18 @@
         function renderTable(rows) {
             const headerRow = document.getElementById('tableHeader');
             headerRow.innerHTML = '';
-            header.forEach(col => {
+            header.forEach((col, idx) => {
                 const th = document.createElement('th');
                 th.textContent = col;
+                th.style.cursor = 'pointer';
+                th.title = 'Sort by ' + col;
+                th.addEventListener('click', function() {
+                    sortTableByColumn(idx);
+                });
+                // Add sort indicator if this is the sorted column
+                if (sortState.col === idx) {
+                    th.textContent += sortState.asc ? ' ▲' : ' ▼';
+                }
                 headerRow.appendChild(th);
             });
             const tableBody = document.getElementById('tableBody');
@@ -216,35 +217,28 @@
         }
 
         function filterAndSearch() {
-            const filter = document.getElementById('filterDate').value;
             const search = document.getElementById('searchInput').value.trim().toLowerCase();
-            let dateColIdx = -1;
             let nameColIdx = -1;
             let emailColIdx = -1;
+            let nextApptDateColIdx = -1;
             header.forEach((col, idx) => {
-                if (col.toLowerCase().includes('date') && dateColIdx === -1) dateColIdx = idx;
                 if (col.toLowerCase().includes('name') && nameColIdx === -1) nameColIdx = idx;
                 if (col.toLowerCase().includes('email') && emailColIdx === -1) emailColIdx = idx;
+                if (col.toLowerCase().includes('next appointment date') && nextApptDateColIdx === -1) nextApptDateColIdx = idx;
             });
-            const today = new Date();
-            today.setHours(0,0,0,0);
-            const tomorrow = new Date(today);
-            tomorrow.setDate(today.getDate() + 1);
             let filtered = allRows.filter(row => {
                 let match = true;
-                // Date filter
-                if (filter !== 'all' && dateColIdx !== -1) {
-                    const d = formatDateString(row[dateColIdx]);
-                    if (!d) return false;
-                    d.setHours(0,0,0,0);
-                    if (filter === 'today' && d.getTime() !== today.getTime()) match = false;
-                    if (filter === 'tomorrow' && d.getTime() !== tomorrow.getTime()) match = false;
-                }
-                // Search filter
-                if (search && (nameColIdx !== -1 || emailColIdx !== -1)) {
+                // Search filter (name, email, and date)
+                if (search && (nameColIdx !== -1 || emailColIdx !== -1 || nextApptDateColIdx !== -1)) {
                     const name = nameColIdx !== -1 ? row[nameColIdx].toLowerCase() : '';
                     const email = emailColIdx !== -1 ? row[emailColIdx].toLowerCase() : '';
-                    if (!name.includes(search) && !email.includes(search)) match = false;
+                    let dateStr = '';
+                    if (nextApptDateColIdx !== -1) {
+                        dateStr = row[nextApptDateColIdx].toLowerCase();
+                    }
+                    // If search looks like a date, also match date column
+                    let isDateSearch = /\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}/.test(search);
+                    if (!name.includes(search) && !email.includes(search) && (!isDateSearch || !dateStr.includes(search))) match = false;
                 }
                 return match;
             });
@@ -263,8 +257,67 @@
                 document.getElementById('appointmentsTable').outerHTML = '<p style="color:red">Failed to load data.</p>';
             });
 
+        // Sorting state
+        let sortState = { col: -1, asc: true };
+
+        function sortTableByColumn(colIdx) {
+            if (sortState.col === colIdx) {
+                sortState.asc = !sortState.asc;
+            } else {
+                sortState.col = colIdx;
+                sortState.asc = true;
+            }
+            // Use filtered rows if filter/search is active, else allRows
+            let rowsToSort = Array.from(document.getElementById('tableBody').children).length === allRows.length ? allRows.slice() : getCurrentFilteredRows();
+            rowsToSort.sort((a, b) => {
+                let valA = a[colIdx] || '';
+                let valB = b[colIdx] || '';
+                // Try to compare as numbers or dates if possible
+                let numA = parseFloat(valA.replace(/[^\d.\-]/g, ''));
+                let numB = parseFloat(valB.replace(/[^\d.\-]/g, ''));
+                if (!isNaN(numA) && !isNaN(numB)) {
+                    return sortState.asc ? numA - numB : numB - numA;
+                }
+                let dateA = formatDateString(valA);
+                let dateB = formatDateString(valB);
+                if (dateA && dateB) {
+                    return sortState.asc ? dateA - dateB : dateB - dateA;
+                }
+                // Fallback to string compare
+                return sortState.asc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+            });
+            renderTable(rowsToSort);
+        }
+
+        // Helper to get currently filtered rows
+        function getCurrentFilteredRows() {
+            const search = document.getElementById('searchInput').value.trim().toLowerCase();
+            let nameColIdx = -1;
+            let emailColIdx = -1;
+            let nextApptDateColIdx = -1;
+            header.forEach((col, idx) => {
+                if (col.toLowerCase().includes('name') && nameColIdx === -1) nameColIdx = idx;
+                if (col.toLowerCase().includes('email') && emailColIdx === -1) emailColIdx = idx;
+                if (col.toLowerCase().includes('next appointment date') && nextApptDateColIdx === -1) nextApptDateColIdx = idx;
+            });
+            return allRows.filter(row => {
+                let match = true;
+                // Search filter (name, email, and date)
+                if (search && (nameColIdx !== -1 || emailColIdx !== -1 || nextApptDateColIdx !== -1)) {
+                    const name = nameColIdx !== -1 ? row[nameColIdx].toLowerCase() : '';
+                    const email = emailColIdx !== -1 ? row[emailColIdx].toLowerCase() : '';
+                    let dateStr = '';
+                    if (nextApptDateColIdx !== -1) {
+                        dateStr = row[nextApptDateColIdx].toLowerCase();
+                    }
+                    let isDateSearch = /\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}/.test(search);
+                    if (!name.includes(search) && !email.includes(search) && (!isDateSearch || !dateStr.includes(search))) match = false;
+                }
+                return match;
+            });
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('filterDate').addEventListener('change', filterAndSearch);
             document.getElementById('searchInput').addEventListener('input', filterAndSearch);
             // Enter key triggers search
             document.getElementById('searchInput').addEventListener('keydown', function(e) {
